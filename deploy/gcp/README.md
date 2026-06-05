@@ -172,34 +172,34 @@ From PowerShell:
   -ServerUrl "https://crm.6alogic.com"
 ```
 
-Equivalent `gcloud run deploy` shape:
+The helper deploys Cloud Run from a generated service YAML instead of a long
+`gcloud run deploy` command. That is intentional: the scale-to-zero profile uses
+three containers in one Cloud Run service:
 
-```powershell
-gcloud run deploy twenty-crm `
-  --project=twenty-crm-498520 `
-  --region=us-central1 `
-  --platform=managed `
-  --execution-environment=gen2 `
-  --ingress=all `
-  --allow-unauthenticated `
-  --add-cloudsql-instances=twenty-crm-498520:us-central1:twenty-db `
-  --min-instances=0 `
-  --max-instances=1 `
-  --container=redis-sidecar `
-  --image=redis:7-alpine `
-  --memory=256Mi `
-  --container=twenty-app `
-  --depends-on=redis-sidecar `
-  --image=us-central1-docker.pkg.dev/twenty-crm-498520/twenty/twenty:dev `
-  --port=3000 `
-  --memory=2Gi `
-  --cpu=1 `
-  --set-env-vars="NODE_PORT=3000,SERVER_URL=https://crm.6alogic.com,REDIS_URL=redis://localhost:6379,DISABLE_DB_MIGRATIONS=false,DISABLE_CRON_JOBS_REGISTRATION=false" `
-  --set-secrets="PG_DATABASE_URL=PG_DATABASE_URL:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,APP_SECRET=APP_SECRET:latest"
+- `twenty-app`: the public CRM web container on port `3000`.
+- `redis-sidecar`: local ephemeral Redis on `localhost:6379`.
+- `cloud-sql-proxy`: Cloud SQL Auth Proxy on `localhost:5432`.
+
+Set `PG_DATABASE_URL` to the local proxy endpoint before deploying:
+
+```text
+postgres://twenty:PASSWORD@localhost:5432/twenty
 ```
 
+Do not point Cloud Run at the Cloud SQL public IP for this profile. The proxy
+sidecar keeps the database closed to public internet access while still allowing
+the Cloud Run service to scale to zero.
+
 `DB_TYPE=postgres` is not part of Twenty's Docker Compose contract. The setting
-that matters for Twenty is `PG_DATABASE_URL`.
+that matters for Twenty is `PG_DATABASE_URL`. The deploy helper also sets
+`APP_VERSION=0.0.0`; Twenty validates this as semver during startup.
+
+If `roles/run.invoker` for `allUsers` fails with an organization-policy error,
+Domain Restricted Sharing is enabled on the Google Workspace organization. The
+Cloud Run service can still deploy and become healthy, but normal browser access
+will stay blocked until an organization/folder policy admin allows public
+invocation for this project or you put an authenticated IAP/load-balancer entry
+point in front of the service.
 
 ### Managed Redis And Worker Profile
 
