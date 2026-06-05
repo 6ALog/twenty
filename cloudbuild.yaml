@@ -1,0 +1,35 @@
+# Cloud Build entrypoint for customized Twenty images.
+#
+# Trigger this file from Google Cloud Build after connecting the GitHub fork.
+# It builds the upstream Twenty production image target and publishes it to
+# Artifact Registry with both an immutable build tag and a movable channel tag.
+
+substitutions:
+  _REGION: us-central1
+  _ARTIFACT_REPOSITORY: twenty
+  _IMAGE_NAME: twenty
+  _DOCKER_TARGET: twenty
+  _CHANNEL_TAG: dev
+
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 100
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: build-twenty-image
+    name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --file=packages/twenty-docker/twenty/Dockerfile
+      - --target=${_DOCKER_TARGET}
+      - --build-arg=APP_VERSION=${BUILD_ID}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${BUILD_ID}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_CHANNEL_TAG}
+      - .
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${BUILD_ID}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_CHANNEL_TAG}
