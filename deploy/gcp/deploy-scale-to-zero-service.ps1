@@ -57,7 +57,6 @@ gcloud run deploy $ServiceName `
   --image=redis:7-alpine `
   --memory=256Mi `
   --startup-probe=tcpSocket.port=6379,periodSeconds=5,timeoutSeconds=2,failureThreshold=12 `
-  --liveness-probe=tcpSocket.port=6379,periodSeconds=30,timeoutSeconds=2,failureThreshold=3 `
   --container=twenty-app `
   --depends-on=redis-sidecar `
   --image=$ImageUrl `
