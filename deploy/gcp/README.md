@@ -59,7 +59,22 @@ gcloud artifacts repositories create $env:ARTIFACT_REPOSITORY `
 
 ## Manual Image Build
 
-Use this before wiring an automatic trigger. From PowerShell:
+Use this before wiring an automatic trigger. If you are on a slow or metered
+connection, prefer the remote builder. It uploads only the tiny build config;
+Cloud Build clones GitHub inside Google's network:
+
+```powershell
+.\deploy\gcp\build-artifact-remote.ps1 `
+  -ProjectId "your-gcp-project-id" `
+  -Region "us-central1" `
+  -ArtifactRepository "twenty" `
+  -ImageName "twenty" `
+  -ChannelTag "dev" `
+  -GitRef "gcp-artifact-pipeline"
+```
+
+The local-source builder below uploads the full repo from your machine. Use it
+only on a stable connection or when you need to build unpushed local changes:
 
 ```powershell
 .\deploy\gcp\build-artifact.ps1 `
