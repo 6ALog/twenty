@@ -86,6 +86,16 @@ The build publishes:
 Use the immutable build ID tag for stable deployments. Use `dev` for quick test
 deployments.
 
+The image URL you pass to Cloud Run is the Artifact Registry URL, not the GitHub
+URL:
+
+```text
+us-central1-docker.pkg.dev/PROJECT_ID/twenty/twenty:dev
+```
+
+GitHub stores the source. Cloud Build reads GitHub and writes this container
+image to Artifact Registry. Cloud Run deploys the Artifact Registry image.
+
 ## Automatic GitHub Trigger
 
 Create the trigger in Google Cloud Console under Cloud Build -> Triggers after
@@ -124,6 +134,60 @@ Cloud Run's local filesystem is disposable.
 
 ## Cloud Run Server
 
+### Scale-To-Zero Profile
+
+If the priority is scaling everything down where Cloud Run allows it, deploy the
+web app with an in-service Redis sidecar and `--min-instances=0`.
+
+This keeps the Cloud Run service at zero instances when idle, but it has a real
+tradeoff: Redis is ephemeral and local to each service instance. It is acceptable
+for a single-user, low-traffic test deployment, but it is not a durable queue for
+background sync. Gmail/Calendar/workflow jobs that require a continuously
+running worker should be considered delayed or unreliable in this profile.
+
+From PowerShell:
+
+```powershell
+.\deploy\gcp\deploy-scale-to-zero-service.ps1 `
+  -ProjectId "twenty-crm-498520" `
+  -Region "us-central1" `
+  -ServiceName "twenty-crm" `
+  -ImageUrl "us-central1-docker.pkg.dev/twenty-crm-498520/twenty/twenty:dev" `
+  -CloudSqlInstance "twenty-crm-498520:us-central1:twenty-db" `
+  -ServerUrl "https://crm.6alogic.com"
+```
+
+Equivalent `gcloud run deploy` shape:
+
+```powershell
+gcloud run deploy twenty-crm `
+  --project=twenty-crm-498520 `
+  --region=us-central1 `
+  --platform=managed `
+  --execution-environment=gen2 `
+  --ingress=all `
+  --allow-unauthenticated `
+  --add-cloudsql-instances=twenty-crm-498520:us-central1:twenty-db `
+  --min-instances=0 `
+  --max-instances=1 `
+  --container=redis-sidecar `
+  --image=redis:7-alpine `
+  --memory=256Mi `
+  --container=twenty-app `
+  --depends-on=redis-sidecar `
+  --image=us-central1-docker.pkg.dev/twenty-crm-498520/twenty/twenty:dev `
+  --port=3000 `
+  --memory=2Gi `
+  --cpu=1 `
+  --set-env-vars="NODE_PORT=3000,SERVER_URL=https://crm.6alogic.com,REDIS_URL=redis://localhost:6379,DISABLE_DB_MIGRATIONS=false,DISABLE_CRON_JOBS_REGISTRATION=false" `
+  --set-secrets="PG_DATABASE_URL=PG_DATABASE_URL:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,APP_SECRET=APP_SECRET:latest"
+```
+
+`DB_TYPE=postgres` is not part of Twenty's Docker Compose contract. The setting
+that matters for Twenty is `PG_DATABASE_URL`.
+
+### Managed Redis And Worker Profile
+
 ```powershell
 $env:IMAGE = "$env:REGION-docker.pkg.dev/$env:PROJECT_ID/$env:ARTIFACT_REPOSITORY/$env:IMAGE_NAME:dev"
 
@@ -145,6 +209,9 @@ service and keep `SERVER_URL` exactly aligned with the public HTTPS URL.
 
 Twenty background sync depends on a worker that stays running. Do not scale this
 to zero if you want Gmail, Calendar, workflow, and queue processing to run.
+If strict scale-to-zero matters more than continuous sync, skip this worker and
+accept delayed/unreliable background processing, or add a later scheduled worker
+experiment that runs for short bursts.
 
 ```powershell
 gcloud beta run worker-pools deploy twenty-worker `
