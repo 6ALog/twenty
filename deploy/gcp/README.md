@@ -9,7 +9,7 @@ pattern is:
 4. Cloud Build pushes the image to Artifact Registry.
 5. Cloud Run server and worker deployments consume that image.
 
-The current local checkout is a shallow clone of `winzealot/twenty` with
+The current local checkout is a shallow clone of `6ALog/twenty` with
 `upstream` pointing at `twentyhq/twenty`.
 
 ## Branch Workflow
@@ -105,7 +105,7 @@ available:
 ```powershell
 gcloud builds triggers create github `
   --name=twenty-artifact-main `
-  --repo-owner=winzealot `
+  --repo-owner=6ALog `
   --repo-name=twenty `
   --branch-pattern="^main$" `
   --build-config=cloudbuild.yaml `
