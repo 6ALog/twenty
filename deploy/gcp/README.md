@@ -59,7 +59,18 @@ gcloud artifacts repositories create $env:ARTIFACT_REPOSITORY `
 
 ## Manual Image Build
 
-Use this before wiring an automatic trigger:
+Use this before wiring an automatic trigger. From PowerShell:
+
+```powershell
+.\deploy\gcp\build-artifact.ps1 `
+  -ProjectId "your-gcp-project-id" `
+  -Region "us-central1" `
+  -ArtifactRepository "twenty" `
+  -ImageName "twenty" `
+  -ChannelTag "dev"
+```
+
+Or call Cloud Build directly:
 
 ```powershell
 gcloud builds submit `
