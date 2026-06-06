@@ -1,0 +1,196 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: twenty-crm-498520
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: twenty
+  IMAGE: twenty
+  SERVICE: twenty-crm
+  CLOUD_SQL_INSTANCE: twenty-crm-498520:us-central1:twenty-db
+  SERVER_URL: https://crm.6alogic.com
+
+jobs:
+  build-and-deploy:
+    name: Build image & deploy to Cloud Run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # required for Workload Identity Federation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/946575880775/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: github-actions-deploy@twenty-crm-498520.iam.gserviceaccount.com
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Layer cache stored in Artifact Registry alongside the image.
+      # Each build stage (front-deps, server-deps, front-build, server-build)
+      # gets its own cache key so a backend-only change doesn't rebuild frontend deps.
+      - name: Build and push (with layer cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: packages/twenty-docker/twenty/Dockerfile
+          target: twenty
+          push: true
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
+          # Inline cache embeds layer metadata into the image itself.
+          # Artifact Registry serves it - no separate cache bucket needed.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:cache,mode=max
+
+      - name: Deploy to Cloud Run
+        run: |
+          DEPLOY_NONCE=$(date +%s)
+          IMAGE_URL="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}"
+
+          cat > /tmp/service.yaml <<EOF
+          apiVersion: serving.knative.dev/v1
+          kind: Service
+          metadata:
+            name: ${{ env.SERVICE }}
+            labels:
+              cloud.googleapis.com/location: ${{ env.REGION }}
+            annotations:
+              run.googleapis.com/ingress: all
+          spec:
+            template:
+              metadata:
+                annotations:
+                  autoscaling.knative.dev/minScale: '0'
+                  autoscaling.knative.dev/maxScale: '1'
+                  run.googleapis.com/execution-environment: gen2
+                  run.googleapis.com/startup-cpu-boost: 'true'
+                  run.googleapis.com/container-dependencies: '{"twenty-app":["redis-sidecar","cloud-sql-proxy"]}'
+                  deploy.gcp.twenty/nonce: '$DEPLOY_NONCE'
+              spec:
+                containerConcurrency: 10
+                serviceAccountName: 946575880775-compute@developer.gserviceaccount.com
+                timeoutSeconds: 300
+                containers:
+                - name: redis-sidecar
+                  image: redis:7-alpine
+                  resources:
+                    limits:
+                      cpu: 500m
+                      memory: 256Mi
+                  startupProbe:
+                    failureThreshold: 12
+                    periodSeconds: 5
+                    timeoutSeconds: 5
+                    tcpSocket:
+                      port: 6379
+                - name: cloud-sql-proxy
+                  image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+                  args:
+                  - --address=0.0.0.0
+                  - --port=5432
+                  - ${{ env.CLOUD_SQL_INSTANCE }}
+                  resources:
+                    limits:
+                      cpu: 500m
+                      memory: 256Mi
+                  startupProbe:
+                    failureThreshold: 12
+                    periodSeconds: 5
+                    timeoutSeconds: 5
+                    tcpSocket:
+                      port: 5432
+                - name: twenty-app
+                  image: $IMAGE_URL
+                  ports:
+                  - name: http1
+                    containerPort: 3000
+                  env:
+                  - name: NODE_PORT
+                    value: '3000'
+                  - name: SERVER_URL
+                    value: ${{ env.SERVER_URL }}
+                  - name: REDIS_URL
+                    value: redis://localhost:6379
+                  - name: DISABLE_DB_MIGRATIONS
+                    value: 'false'
+                  - name: DISABLE_CRON_JOBS_REGISTRATION
+                    value: 'false'
+                  - name: APP_VERSION
+                    value: '0.0.0'
+                  - name: AUTH_GOOGLE_ENABLED
+                    value: 'true'
+                  - name: GOOGLE_APIS_CALLBACK_URL
+                    value: ${{ env.SERVER_URL }}/auth/google-apis/get-access-token
+                  - name: PG_DATABASE_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: PG_DATABASE_URL
+                        key: latest
+                  - name: ENCRYPTION_KEY
+                    valueFrom:
+                      secretKeyRef:
+                        name: ENCRYPTION_KEY
+                        key: latest
+                  - name: APP_SECRET
+                    valueFrom:
+                      secretKeyRef:
+                        name: APP_SECRET
+                        key: latest
+                  - name: AUTH_GOOGLE_CLIENT_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: AUTH_GOOGLE_CLIENT_ID
+                        key: latest
+                  - name: AUTH_GOOGLE_CLIENT_SECRET
+                    valueFrom:
+                      secretKeyRef:
+                        name: AUTH_GOOGLE_CLIENT_SECRET
+                        key: latest
+                  resources:
+                    limits:
+                      cpu: '1'
+                      memory: 2Gi
+                  startupProbe:
+                    failureThreshold: 60
+                    periodSeconds: 10
+                    timeoutSeconds: 5
+                    tcpSocket:
+                      port: 3000
+            traffic:
+            - percent: 100
+              latestRevision: true
+          EOF
+
+          gcloud run services replace /tmp/service.yaml \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }}
+
+      - name: Verify deployment
+        run: |
+          STATUS=$(gcloud run services describe ${{ env.SERVICE }} \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --format="value(status.conditions[0].status)")
+          echo "Service ready status: $STATUS"
+          if [ "$STATUS" != "True" ]; then
+            echo "Deployment may not be healthy, check Cloud Run console."
+            exit 1
+          fi

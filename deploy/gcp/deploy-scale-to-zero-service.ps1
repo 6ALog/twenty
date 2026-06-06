@@ -20,6 +20,10 @@ param(
 
   [string] $AppSecretSecret = "APP_SECRET",
 
+  [string] $GoogleClientIdSecret = "AUTH_GOOGLE_CLIENT_ID",
+
+  [string] $GoogleClientSecretSecret = "AUTH_GOOGLE_CLIENT_SECRET",
+
   [string] $ServiceAccountEmail = ""
 )
 
@@ -130,6 +134,20 @@ spec:
             secretKeyRef:
               name: $AppSecretSecret
               key: latest
+        - name: AUTH_GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $GoogleClientIdSecret
+              key: latest
+        - name: AUTH_GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $GoogleClientSecretSecret
+              key: latest
+        - name: AUTH_GOOGLE_ENABLED
+          value: 'true'
+        - name: GOOGLE_APIS_CALLBACK_URL
+          value: $ServerUrl/auth/google-apis/get-access-token
         resources:
           limits:
             cpu: '1'

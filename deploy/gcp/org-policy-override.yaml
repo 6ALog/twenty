@@ -1,0 +1,4 @@
+name: projects/twenty-crm-498520/policies/iam.allowedPolicyMemberDomains
+spec:
+  rules:
+  - allowAll: true
